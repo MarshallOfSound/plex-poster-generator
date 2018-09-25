@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+  <style>
+    html, body {
+      padding: 0;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+    }
+    body {
+      background: #333;
+    }
+    .editor {
+      width: 100vw;
+      height: 100vh;
+    }
+    .toolbar {
+      height: 42px;
+      width: 100vw;
+      background: #555;
+      border-bottom: 1px solid white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+
+    .toolbar span {
+      margin: 0 8px;
+    }
+
+    .toolbar .file {
+      position: relative;
+    }
+
+    .toolbar .file [type="file"] {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      z-index: 2;
+    }
+
+    .toolbar a {
+      color: white;
+      margin-left: 16px;
+    }
+
+    #target {
+      border: 1px solid white;
+      cursor: move;
+    }
+  </style>
+</head>
+<body>
+  <div class="editor">
+    <div class="toolbar">
+      <span>Background: </span>
+      <div class="file">
+        <button>Choose File</button>
+        <input id="background-file" type="file" />
+      </div>
+      <span>Icon: </span>
+      <div class="file">
+        <button>Choose File</button>
+        <input id="icon-file" type="file" />
+      </div>
+      <span>Blur: </span>
+      <input id="blur-check" type="checkbox" checked />
+      <span>Collection Text: </span>
+      <input id="text-check" type="checkbox" checked />
+      <span>Background Scale: </span>
+      <input id="back-scale" type="range" min="0.3" max="3" step="0.05" />
+      <span>Icon Scale: </span>
+      <input id="icon-scale" type="range" min="0.3" max="2" step="0.05" value="1" />
+      <a id="download" href="#">Download as PNG</a>
+    </div>
+    <canvas id="target" height="1500" width="1000"></canvas>
+  </div>
+  <script>
+    class Updatable {
+      _prop(name, defaultValue) {
+        let value = defaultValue;
+
+        Object.defineProperty(this, name, {
+          get() {
+            return value;
+          },
+          set(newValue) {
+            value = newValue;
+            this.update();
+          },
+          configurable: false,
+          enumerable: true,
+        });
+      }
+    }
+    class Position extends Updatable {
+      constructor(parent, x, y) {
+        super();
+        this._parent = parent;
+        this._prop('x', x || 0);
+        this._prop('y', y || 0);
+      }
+
+      update() {
+        this._parent.update();
+      }
+    }
+    class Options extends Updatable {
+      constructor() {
+        super();
+        this._prop('blur', true);
+        this._prop('collectionLabel', true);
+        this._prop('iconScale', 1);
+        this._prop('backgroundScale', 1);
+        Object.defineProperty(this, 'backgroundOffset', {
+          value: new Position(this),
+          configurable: false,
+          enumerable: true,
+        });
+      }
+
+      update() {
+        render();
+      }
+    }
+    const options = new Options();
+    // Monitor Toolbar for Option Changes
+    const blurCheckbobx = document.querySelector('#blur-check');
+    blurCheckbobx.addEventListener('change', () => {
+      console.log('changed');
+      options.blur = blurCheckbobx.checked;;
+    });
+
+    const textCheckbobx = document.querySelector('#text-check');
+    textCheckbobx.addEventListener('change', () => {
+      options.collectionLabel = textCheckbobx.checked;
+    });
+
+    const backScale = document.querySelector('#back-scale');
+    backScale.addEventListener('mousemove', () => {
+      options.backgroundScale = backScale.value;
+    });
+    backScale.addEventListener('change', () => {
+      options.backgroundScale = backScale.value;
+    });
+
+    const iconScale = document.querySelector('#icon-scale');
+    iconScale.addEventListener('mousemove', () => {
+      options.iconScale = iconScale.value;
+    });
+    iconScale.addEventListener('change', () => {
+      options.iconScale = iconScale.value;
+    });
+
+    const images = {
+      icon: null,
+      background: null,
+      overlay: new Image(),
+    };
+
+    const draggable = document.querySelector('#target');
+    let drag = null;
+    draggable.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+
+      e.preventDefault();
+      drag = {
+        initial: { x: options.backgroundOffset.x, y: options.backgroundOffset.y },
+        base: { x: e.screenX, y: e.screenY },
+      };
+    });
+    window.addEventListener('mouseup', () => {
+      drag = null;
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (drag && images.background) {
+        options.backgroundOffset.x = drag.initial.x + ((e.screenX - drag.base.x) / window._canvasScale);
+        options.backgroundOffset.y = drag.initial.y + ((e.screenY - drag.base.y) / window._canvasScale);
+      }
+    });
+
+    const backgroundFile = document.querySelector('#background-file');
+    backgroundFile.addEventListener('change', (e) => {
+      if (backgroundFile.files.length === 0) return;
+
+      const reader = new FileReader();
+      reader.addEventListener('load', () => {
+        images.background = new Image();
+        images.background.addEventListener('load', render);
+        images.background.src = reader.result;
+      });
+      reader.readAsDataURL(backgroundFile.files[0]);
+    });
+
+    const iconFile = document.querySelector('#icon-file');
+    iconFile.addEventListener('change', (e) => {
+      if (iconFile.files.length === 0) return;
+
+      const reader = new FileReader();
+      reader.addEventListener('load', () => {
+        images.icon = new Image();
+        images.icon.addEventListener('load', render);
+        images.icon.src = reader.result;
+      });
+      reader.readAsDataURL(iconFile.files[0]);
+    });
+
+    const POSTER_WIDTH = 1000;
+    const POSTER_HEIGHT = 1500;
+
+    images.overlay.addEventListener('load', () => {
+      render();
+    });
+    images.overlay.src = './overlay.png';
+
+    function getIcon() {
+      const image = images.icon;
+
+      const canvas = document.createElement('canvas');
+      canvas.setAttribute('width', image.width);
+      canvas.setAttribute('height', image.height);
+      const ctx = canvas.getContext('2d');
+
+      ctx.drawImage(image, 0, 0);
+      const imageData = ctx.getImageData(0, 0, image.width, image.height);
+      const data = imageData.data;
+
+      for(let i = 0; i < data.length; i += 4) {
+        // red
+        data[i] = 255;
+        // green
+        data[i + 1] = 255;
+        // blue
+        data[i + 2] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      return {
+        canvas,
+        width: image.width,
+        height: image.height,
+      };
+    }
+
+    function getBackground() {
+      const image = images.background;
+
+      const canvas = document.createElement('canvas');
+      canvas.setAttribute('width', image.width);
+      canvas.setAttribute('height', image.height);
+      const ctx = canvas.getContext('2d');
+
+      ctx.drawImage(image, 0, 0);
+
+      return {
+        canvas,
+        width: image.width,
+        height: image.height,
+      };
+    }
+
+    function render() {
+      const targetCanvas = document.querySelector('#target');
+      const ctx = targetCanvas.getContext('2d');
+      ctx.clearRect(0, 0, POSTER_WIDTH, POSTER_HEIGHT);
+
+      if (!images.background) {
+        ctx.font = "80px Arial";
+        ctx.fillStyle = 'white';
+        ctx.fillText('You must choose a', 100, 100);
+        ctx.fillText('background image', 100, 200);
+        return;
+      }
+
+      withCleanContext(() => {
+        const background = getBackground();
+        ctx.translate(
+          options.backgroundOffset.x,
+          options.backgroundOffset.y,
+        );
+        const scale = Math.max(Math.max(
+          POSTER_HEIGHT / background.height,
+          POSTER_WIDTH / background.width,
+        ), options.backgroundScale);
+        backScale.value = scale;
+        ctx.scale(scale, scale);
+        if (options.blur) {
+          ctx.filter = 'blur(9px)';
+        }
+        ctx.drawImage(background.canvas, 0, 0);
+      });
+
+
+      new window.Blob([], {
+        type: 'image/png',
+      });
+      withCleanContext(() => {
+        if (!images.icon) return;
+
+        const icon = getIcon();
+        const x = (POSTER_WIDTH / 2) - ((icon.width * options.iconScale) / 2);
+        const y = (POSTER_HEIGHT / 2) - ((icon.height * options.iconScale) / 2);
+        ctx.translate(x, y);
+        ctx.scale(options.iconScale, options.iconScale);
+        ctx.globalAlpha = 0.75;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 1;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#000';
+        ctx.drawImage(icon.canvas, 0, 0);
+      });
+
+      withCleanContext(() => {
+        if (options.collectionLabel) {
+          ctx.drawImage(images.overlay, 0, 0);
+        }
+      });
+
+      function withCleanContext(fn) {
+        ctx.save();
+        fn();
+        ctx.restore();
+      }
+    }
+
+    function scaleTargetCanvas() {
+      const targetCanvas = document.querySelector('#target');
+      const availableHeight = document.querySelector('.editor').getBoundingClientRect().height
+         - document.querySelector('.toolbar').getBoundingClientRect().height
+         - 96;
+      const availableWidth = document.querySelector('.editor').getBoundingClientRect().width
+         - 96;
+
+      const scale = Math.min(availableHeight / POSTER_HEIGHT, availableWidth / POSTER_WIDTH);
+      window._canvasScale = scale;
+
+      targetCanvas.setAttribute('style', `transform: scale(${scale})`);
+      targetCanvas.style.position = 'fixed';
+      targetCanvas.style.top = `${48 + document.querySelector('.toolbar').getBoundingClientRect().height
+        - (POSTER_HEIGHT - (POSTER_HEIGHT * scale)) / 2}px`;
+      targetCanvas.style.left = `${(document.querySelector('.editor').getBoundingClientRect().width / 2)
+        - (POSTER_WIDTH * scale / 2) - (POSTER_WIDTH - (POSTER_WIDTH * scale)) / 2}px`;
+    }
+
+    scaleTargetCanvas();
+    window.addEventListener('resize', scaleTargetCanvas);
+
+    document.querySelector('#download').addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!images.background) return;
+
+      const targetCanvas = document.querySelector('#target');
+
+      const a = document.createElement('a');
+      targetCanvas.toBlob((blob) => {
+        a.href = URL.createObjectURL(blob);
+        a.download = 'Poster.png';
+        a.click();
+      }, 'image/png');
+    })
+  </script>
+</body>
+</html>
